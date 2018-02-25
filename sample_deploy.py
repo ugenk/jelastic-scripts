@@ -36,8 +36,8 @@ if mode == 'production':
 		'useExistingVolumes': True
 	}
 
-if not DATA:
-	sys.exit(1)
+try: DATA
+except NameError: sys.exit(1)
 
 response = requests.post(URL, headers=HEADERS, data=DATA)
 response.content
