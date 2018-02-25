@@ -1,0 +1,111 @@
+stages:
+- prebuild
+- test
+- build
+- release
+
+variables:
+#  https://gitlab.com/gitlab-org/gitlab-ce/issues/17861#note_13014894
+#  DOCKER_DRIVER: overlay2
+  CONTAINER_TEST_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_NAME
+  CONTAINER_RELEASE_IMAGE: $CI_REGISTRY_IMAGE:latest
+  OSIMAGE_CONTAINER: $CI_REGISTRY_IMAGE/osimage:latest
+  DJANGO_DEBUG_LEVEL: DEBUG
+
+update_osimage:
+  tags:
+    - docker
+  image: docker:latest
+  before_script:
+    - docker login -u gitlab-ci-token -p $CI_BUILD_TOKEN $CI_REGISTRY
+  script:
+    - docker build -f docker/Dockerfile.osimage --pull -t $OSIMAGE_CONTAINER .
+    - docker push $OSIMAGE_CONTAINER
+  stage: prebuild
+
+build:
+  tags:
+    - docker
+  cache:
+    paths:
+      - ~/.cache/pip/
+  image: ugenk/docker-python:latest
+  before_script:
+    - docker login -u gitlab-ci-token -p $CI_BUILD_TOKEN $CI_REGISTRY
+  stage: build
+  script:
+    - docker build -f docker/Dockerfile --pull -t $CONTAINER_TEST_IMAGE .
+    - docker push $CONTAINER_TEST_IMAGE
+  when: on_success
+  after_script:
+    - python docker/deploy.py staging
+
+.staticcheck:
+  tags:
+    - docker
+  image: $OSIMAGE_CONTAINER
+  before_script:
+    - pip install -U flake8
+  script:
+    - flake8 .
+  stage: test
+  allow_failure: true
+
+.test:
+  tags:
+    - python
+  variables:
+    CA_USE_SQLITE: "True"
+    CA_DISABLE_CACHE: "True"
+    ENV_DIR: "~/ca-env"
+  cache:
+    paths:
+      - ~/.cache/pip/
+      - ~/env
+  before_script:
+    - rm -rf $ENV_DIR /tmp/ca*db
+    - virtualenv --python=python2.7 $ENV_DIR
+    - source $ENV_DIR/bin/activate
+    - pip install -U pip setuptools
+    - pip install -Ur requirements.txt
+    - python manage.py migrate
+  script:
+    - source $ENV_DIR/bin/activate
+    - python manage.py test
+  stage: test
+
+testindocker:
+  tags:
+    - docker
+  variables:
+    CA_USE_SQLITE: "True"
+    CA_DISABLE_CACHE: "True"
+  cache:
+    paths:
+      - ~/.cache/pip/
+  image: $OSIMAGE_CONTAINER
+  script:
+    - python manage.py migrate
+    - python manage.py test
+  stage: test
+
+release-image:
+  tags:
+    - docker
+  cache:
+    paths:
+      - ~/.cache/pip/
+  image: ugenk/docker-python:latest
+  before_script:
+    - docker login -u gitlab-ci-token -p $CI_BUILD_TOKEN $CI_REGISTRY
+  stage: release
+  script:
+    - docker pull $CONTAINER_TEST_IMAGE
+    - docker tag $CONTAINER_TEST_IMAGE $CONTAINER_RELEASE_IMAGE
+    - docker push $CONTAINER_RELEASE_IMAGE
+  only:
+    - master
+  when: manual
+  after_script:
+    - python docker/deploy.py production
+
