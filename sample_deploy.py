@@ -33,6 +33,7 @@ if mode == 'production':
 		'envName': ENV,
 		'nodeGroup': 'cp',
 		'tag': 'latest',
+		'sequential': True,
 		'useExistingVolumes': True
 	}
 
